@@ -428,6 +428,7 @@ if __name__ == "__main__":
                     elif arg.remove:  # Remove domain/alias
                         vhost.remove(domain, port, alias)
 
+                    vhost.save()
                     vhost.restart_apache()
 
                 """ List domains alias """
