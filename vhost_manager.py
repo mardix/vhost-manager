@@ -13,7 +13,7 @@ where updates can be pushed to git via ssh: root@ip:/home/domain.com/www.git
 
 License: MIT
 Copyright: (c) 2013 [Mardix](https://github.com/mardix)
-Python version >= 2.7.5
+Python __version__ >= 2.7.5
 Platform: Linux (Centos, RHEL, Ubuntu) and OSX
 
 > Usage as script:
@@ -50,11 +50,13 @@ with vhost_manager.VHost() as vhost:
 """
 
 import os
+import subprocess
 import platform
+import stat
 
 
 NAME = "VHostManager"
-VERSION = 0.1
+__version__ = 0.2
 __author__ = "Mardix"
 LICENSE = "MIT"
 GIT_REPO = "https://github.com/mardix/vhost-manager"
@@ -71,17 +73,17 @@ GIT_REPO = "https://github.com/mardix/vhost-manager"
 DIST_CONF = {
     "rhel": {  # valid for centos, fedora and rhel distribution
         "home_dir": "/home",
-        "vhost_file": "/etc/httpd/conf.d/vhost.conf",
+        "vhost_file": "/etc/httpd/conf.d/vhosts.conf",
         "restart_cmd": "service httpd restart"
     },
     "ubuntu": {
         "home_dir": "/home",
-        "vhost_file": "/etc/apache2/sites-enabled/vhost.conf",
+        "vhost_file": "/etc/apache2/sites-enabled/vhosts.conf",
         "restart_cmd": "service apache2 restart"
     },
     "osx": {
         "home_dir": "/home",
-        "vhost_file": "/etc/apache2/extra/vhost.conf",
+        "vhost_file": "/etc/apache2/extra/vhosts.conf",
         "restart_cmd": "/usr/sbin/apachectl restart"
     },
     "default": {
@@ -109,15 +111,11 @@ vhost_template = """<VirtualHost *:{PORT}>
     DocumentRoot {DOMAIN_DIR}/www
     ErrorLog {DOMAIN_DIR}/logs/error.log
     CustomLog {DOMAIN_DIR}/logs/access.log combined
-    #DirectoryIndex index.html index.htm index.php
     <Directory {DOMAIN_DIR}/www>
         Options -Indexes +IncludesNOEXEC +SymLinksIfOwnerMatch +ExecCGI
         allow from all
         AllowOverride All Options=ExecCGI,Includes,IncludesNOEXEC,Indexes,MultiViews,SymLinksIfOwnerMatch
-        #AddHandler fcgid-script .php
-        #FCGIWrapper {DOMAIN_DIR}/fcgi-bin/php.fcgi .php
     </Directory>
-    #RemoveHandler .php
 </VirtualHost>
 """
 
@@ -127,9 +125,9 @@ vhost_alias_template = "    ServerAlias {ALIAS}"
 ##########
 
 class VHost:
-    content = ""
-    file = None
-    __write_file = False
+    _content = ""
+    _file = None
+    _write_file = False
     dist = "default"
 
     def __init__(self):
@@ -141,9 +139,9 @@ class VHost:
         if not os.path.isfile(vhost_file):  # Force the creation of the file
             open(vhost_file, "a").close()
 
-        self.file = open(vhost_file, "r+")
-        self.content = self.file.read()
-        self.__write_file = False
+        self._file = open(vhost_file, "r+")
+        self._content = self._file.read()
+        self._write_file = False
 
     def __enter__(self):
         return self
@@ -153,18 +151,20 @@ class VHost:
 
     def close(self):
         self.save()
-        self.file.close()
+        self._file.close()
 
     def save(self):
-        if self.__write_file:
-            self.__write_file = False
-            self.file.seek(0)
-            self.file.write(self.content)
-            self.file.truncate()
+        if self._write_file:
+            self._write_file = False
+            self._file.seek(0)
+            self._file.write(self._content)
+            self._file.truncate()
 
     @staticmethod
     def __get_dist():
-        """ Return the current distribution: rhel (for centos, fedora, rhel), ubuntu, osx or default for unknown """
+        """ Return the current distribution: rhel (for centos, fedora, rhel),
+         ubuntu, osx or default for unknown
+        """
 
         dist = platform.dist()[0]
         system = platform.system()
@@ -177,6 +177,7 @@ class VHost:
                 dist = "OSX"
             else:
                 dist = "default"
+
         return dist.lower()
 
     def has_domain(self, domain, port=DEFAULT_PORT):
@@ -184,7 +185,7 @@ class VHost:
         
         vhost_tag_open = False
 
-        for line in self.content.split("\n"):
+        for line in self._content.split("\n"):
             if self.__get_vhost_line(port) in line:
                 vhost_tag_open = True
 
@@ -200,12 +201,16 @@ class VHost:
         """ Add a new domain or alias to a domain by port"""
 
         if self.has_domain(domain, port) is not True:
-            self.content += "\n" + vhost_template.format(DOMAIN_NAME=domain, DOMAIN_DIR=self.get_domaindir(domain), PORT=port)
+            self._content += "\n"
+            self._content += vhost_template.format(DOMAIN_NAME=domain,
+                                                   DOMAIN_DIR=self.get_domaindir(domain),
+                                                   PORT=port)
 
         new_content = []
         vhost_tag_open = False
-        for line in self.content.split("\n"):
+        for line in self._content.split("\n"):
             new_content.append(line)
+
             if self.__get_vhost_line(port) in line:
                 vhost_tag_open = True
 
@@ -214,11 +219,11 @@ class VHost:
 
             if vhost_tag_open and self.__get_servername_line(domain) in line:  # Add alias
                 for alias_ in alias:
-                    if alias_ not in self.content:
+                    if alias_ not in self._content:
                         new_content.append(vhost_alias_template.format(ALIAS=alias_))
 
-        self.content = "\n".join(new_content)
-        self.__write_file = True
+        self._content = "\n".join(new_content)
+        self._write_file = True
 
     def remove(self, domain, port, alias=[]):
         """ Remove a domain or alias of a domain by port """
@@ -233,7 +238,7 @@ class VHost:
             if len(alias) > 0:
                 remove_alias = True
 
-            for line in self.content.split("\n"):
+            for line in self._content.split("\n"):
                 if self.__get_vhost_line(port) in line:
                     vhost_tag_open = True
 
@@ -254,15 +259,14 @@ class VHost:
                     if "</VirtualHost>" in line:
                         if remove_alias or not in_vhost and len(tmp_content) > 0:
                             new_content = new_content + tmp_content
-
                         tmp_content = []
                         in_vhost = False
                         vhost_tag_open = False
                 else:
                     new_content.append(line)
 
-            self.content = "\n".join(new_content)
-            self.__write_file = True
+            self._content = "\n".join(new_content)
+            self._write_file = True
 
 
     def list_domains(self, domain=None, port=DEFAULT_PORT):
@@ -274,7 +278,7 @@ class VHost:
         in_vhost = False
         _port = ""
 
-        for line in self.content.split("\n"):
+        for line in self._content.split("\n"):
 
             if self.__get_vhost_line(port) in line:
                 vhost_tag_open = True
@@ -289,14 +293,14 @@ class VHost:
             if domain:
                 if self.__get_servername_line(domain) in line:
                     in_vhost = True
+
                 if vhost_tag_open and in_vhost:
                     if "ServerAlias" in line:
                         domains.append(self.__get_serveralias(line))
             else:
                 if "ServerName" in line:
                     domains.append(self.__get_servername(line) + ":" + _port)
-
-        return domains
+        return sorted(domains)
 
     def create_dir(self, domain):
         """ Create all domain related directories """
@@ -329,9 +333,9 @@ class VHost:
         return DIST_CONF[self.dist]["home_dir"] + "/" + domain
 
     def restart_apache(self):
-        os.system(DIST_CONF[self.dist]["restart_cmd"])
+        subprocess.call(DIST_CONF[self.dist]["restart_cmd"], shell=True)
 
-    def create_bare_repo(self, domain, with_crontab=False):
+    def create_bare_repo(self, domain):
         """ Create a bare repo, will allow you to update the site with git """
 
         domain_dir = self.get_domaindir(domain)
@@ -343,55 +347,75 @@ class VHost:
             os.makedirs(www_git)
             git_init_command = "cd " + www_git
             git_init_command += " && git init --bare"
-            os.system(git_init_command)
+            subprocess.call(git_init_command, shell=True)
 
         if not os.path.isfile(hook_post_receive_file):
             with open(hook_post_receive_file, "w") as file:
                 post_receive_content = "#!/bin/sh"
-                post_receive_content += "\nGIT_WORK_TREE=" + www_dir + " git checkout -f"
+                post_receive_content += "\nGIT_WORK_TREE=" + www_dir
+                post_receive_content += " git checkout -f"
                 file.write(post_receive_content)
-            os.system("chmod +x " + hook_post_receive_file)
+            subprocess.call("chmod +x " + hook_post_receive_file, shell=True)
 
 
-if __name__ == "__main__":
+def parse_domain(domain):
+    """ Parse a domain:port return a list [domain, port] """
+    import re
+
+    domain = re.sub('^https?://', "", domain)
+    d = domain.split(":", 1)
+    if len(d) == 1:
+        d.append(DEFAULT_PORT)
+    return d
+
+
+def main():
+    """ Command Line execution """
     import argparse
-
-    def parse_domain(domain):
-        """ Parse a domain:port return a list [domain, port] """
-        d = domain.split(":", 1)
-        if len(d) == 1:
-            d.append(DEFAULT_PORT)
-        return d
 
     try:
         with VHost() as vhost:
             parser = argparse.ArgumentParser()
             parser.add_argument("--add",
-                                help="Create new domain or add alias|subdomain associated to it. ie [--add domain.com:80]",
+                                help="Create new domain or add alias|subdomain "
+                                     "associated to it. "
+                                     "ie [--add domain.com:80]",
                                 metavar="")
             parser.add_argument("--remove",
-                                help="Remove domain or alias|subdomain associated to it. ie [--remove domain.com:80]",
+                                help="Remove domain or alias|subdomain "
+                                     "associated to it. "
+                                     "ie [--remove domain.com:80]",
                                 metavar="")
             parser.add_argument("-a", "--alias",
-                                help="Alias name. For multiple alias: [-a new-domain.com -a another.com]",
+                                help="Alias name. For multiple alias: "
+                                     "[-a new-domain.com -a another.com]",
                                 metavar="",
                                 action="append")
             parser.add_argument("-s", "--subdomain",
-                                help="Subdomain name prefix for the domain. dev = dev.domain.com "
-                                     "For multiple subdomain: [-s dev -s admin -s intranet]",
+                                help="Subdomain name prefix for the domain. "
+                                     "dev = dev.domain.com For multiple "
+                                     "subdomain: [-s dev -s admin -s intranet]",
                                 metavar="",
                                 action="append")
-            parser.add_argument("--list-domains", help="List all domains", action="store_true")
-            parser.add_argument("--list-alias", help="List all alias under a domain [--ls-alias domain.com:8080]",
+            parser.add_argument("--list-domains",
+                                help="List all domains",
+                                action="store_true")
+            parser.add_argument("--list-alias",
+                                help="List all alias under a domain "
+                                     "[--ls-alias domain.com:8080]",
                                 metavar="")
-            parser.add_argument("--restart-apache", help="To manually restart apache", action="store_true")
-            parser.add_argument("--skip-bare-repo", help="To skip the creation of a git bare repo", action="store_true")
+            parser.add_argument("--restart-apache",
+                                help="To manually restart apache",
+                                action="store_true")
+            parser.add_argument("--skip-bare-repo",
+                                help="To skip the creation of a git bare repo",
+                                action="store_true")
 
             arg = parser.parse_args()
 
             with VHost() as vhost:
                 print ("*" * 80)
-                print (NAME + " " + str(VERSION) + \
+                print (NAME + " " + str(__version__) + \
                       " [ " + __author__ + " - " + GIT_REPO + " ]")
 
                 """ Add or Remove domains/alias """
@@ -424,7 +448,6 @@ if __name__ == "__main__":
                         vhost.create_dir(domain)
                         if CREATE_BARE_REPO and not arg.skip_bare_repo:
                             vhost.create_bare_repo(domain)
-
                     elif arg.remove:  # Remove domain/alias
                         vhost.remove(domain, port, alias)
 
@@ -453,8 +476,8 @@ if __name__ == "__main__":
                     vhost.restart_apache()
 
     except Exception as ex:
-        print (NAME + " " + str(VERSION) + " encounters an error")
+        print (NAME + " " + str(__version__) + " encounters an error")
         print (ex)
 
-
-
+if __name__ == "__main__":
+    main()
